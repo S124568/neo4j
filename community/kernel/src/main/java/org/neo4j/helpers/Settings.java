@@ -25,14 +25,21 @@ import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.neo4j.graphdb.config.ConfigLookup;
 import org.neo4j.graphdb.config.InvalidSettingException;
 import org.neo4j.graphdb.config.Setting;
 import org.neo4j.helpers.collection.Iterables;
 import org.neo4j.io.fs.FileUtils;
 import org.neo4j.kernel.configuration.Config;
+
+import static java.util.stream.Collectors.toList;
+import static org.neo4j.helpers.Pair.pair;
 
 /**
  * Create settings for configurations in Neo4j. See {@link org.neo4j.graphdb.factory.GraphDatabaseSettings} for example.
@@ -99,7 +106,7 @@ public final class Settings
 
     public static <T> Setting<T> setting( final String name, final Function<String, T> parser,
                                           final String defaultValue,
-                                          final Function2<T, Function<String, String>, T>... valueConverters )
+                                          final Function2<T, ConfigLookup, T>... valueConverters )
     {
         return setting( name, parser, defaultValue, null, valueConverters );
     }
@@ -113,8 +120,8 @@ public final class Settings
 
     public static <T> Setting<T> setting( final String name, final Function<String, T> parser,
                                           final String defaultValue,
-                                          final Setting<T> inheritedSetting, final Function2<T, Function<String,
-            String>, T>... valueConverters )
+                                          final Setting<T> inheritedSetting,
+                                          final Function2<T, ConfigLookup, T>... valueConverters )
     {
         Function<Function<String, String>, String> valueLookup = named( name );
 
@@ -725,12 +732,12 @@ public final class Settings
             };
 
     // Setting converters and constraints
-    public static Function2<File, Function<String, String>, File> basePath( final Setting<File> baseSetting )
+    public static Function2<File, ConfigLookup, File> basePath( final Setting<File> baseSetting )
     {
-        return new Function2<File, Function<String, String>, File>()
+        return new Function2<File, ConfigLookup, File>()
         {
             @Override
-            public File apply( File path, Function<String, String> settings )
+            public File apply( File path, ConfigLookup settings )
             {
                 File parent = baseSetting.apply( settings );
 
@@ -834,18 +841,132 @@ public final class Settings
     {
     }
 
+    public static class ConfigGroup
+    {
+        private final ConfigLookup groupValues;
+
+        public ConfigGroup( ConfigLookup values )
+        {
+            this.groupValues = values;
+        }
+
+        public <T> T get( Setting<T> setting )
+        {
+            return setting.apply( groupValues );
+        }
+    }
+
+    public static Setting<List<ConfigGroup>> group( String groupBaseName )
+    {
+        return new GroupSetting( groupBaseName );
+    }
+
+    public static class GroupSetting implements Setting<List<ConfigGroup>>
+    {
+        private final String name;
+
+        /**
+         *
+         * @param groupBaseName should be the common base part that all values in this group share
+         */
+        public GroupSetting( String groupBaseName )
+        {
+            this.name = groupBaseName;
+        }
+
+        @Override
+        public String name()
+        {
+            return name;
+        }
+
+        @Override
+        public String getDefaultValue()
+        {
+            return null;
+        }
+
+        @Override
+        public List<ConfigGroup> apply( ConfigLookup settings )
+        {
+            // dbms.bula.0.name, zhen
+
+            Pattern pattern = Pattern.compile( Pattern.quote( name ) + "\\.\\(d+)(.+)" );
+            List<Pair<String,String>> pairs = settings.find( pattern );
+            Map<String, Map<String, String>> groups = new HashMap<>();
+            for( Pair<String, String> entry: pairs )
+            {
+                Matcher matcher = pattern.matcher( entry.first() );
+
+                String index = matcher.group(1);
+                String configName = matcher.group(2);
+                String value = entry.other();
+
+                Map<String,String> groupConfig = groups.get( index );
+                if( groupConfig == null )
+                {
+                    groupConfig = new HashMap<>();
+                }
+                groupConfig.put( configName, value );
+
+                groups.put( index, groupConfig );
+            }
+
+            return groups.values().stream()
+                    .map( m -> new ConfigGroup(new MapConfigLookup( m ) ) )
+                    .collect( toList() );
+        }
+
+        @Override
+        public String toString()
+        {
+            return null;
+        }
+    }
+
+    public static class MapConfigLookup implements ConfigLookup
+    {
+        private final Map<String,String> m;
+
+        public MapConfigLookup( Map<String,String> m )
+        {
+            this.m = m;
+        }
+
+        @Override
+        public List<Pair<String,String>> find( Pattern regex )
+        {
+            List<Pair<String, String>> values = new ArrayList<>();
+            for ( Map.Entry<String,String> entry : m.entrySet() )
+            {
+                if( regex.matcher( entry.getKey() ).matches() )
+                {
+                    values.add( pair( entry.getKey(), entry.getValue() ));
+                }
+            }
+
+            return values;
+        }
+
+        @Override
+        public String apply( String s )
+        {
+            return m.get( s );
+        }
+    }
+
     public static class DefaultSetting<T> implements SettingHelper<T>
     {
         private final String name;
         private final Function<String, T> parser;
         private final Function<Function<String, String>, String> valueLookup;
         private final Function<Function<String, String>, String> defaultLookup;
-        private Function2<T, Function<String, String>, T>[] valueConverters;
+        private Function2<T, ConfigLookup, T>[] valueConverters;
 
         public DefaultSetting( String name, Function<String, T> parser,
                                Function<Function<String, String>, String> valueLookup, Function<Function<String,
                 String>, String> defaultLookup,
-                               Function2<T, Function<String, String>, T>... valueConverters )
+                               Function2<T, ConfigLookup, T>... valueConverters )
         {
             this.name = name;
             this.parser = parser;
@@ -877,7 +998,7 @@ public final class Settings
         }
 
         @Override
-        public T apply( Function<String, String> settings )
+        public T apply( ConfigLookup settings )
         {
             // Lookup value as string
             String value = lookup( settings );
@@ -907,7 +1028,7 @@ public final class Settings
             {
                 result = parser.apply( value );
                 // Apply converters and constraints
-                for ( Function2<T, Function<String, String>, T> valueConverter : valueConverters )
+                for ( Function2<T, ConfigLookup, T> valueConverter : valueConverters )
                 {
                     result = valueConverter.apply( result, settings );
                 }
@@ -932,7 +1053,7 @@ public final class Settings
                 builder.append( " which " );
                 for ( int i = 0; i < valueConverters.length; i++ )
                 {
-                    Function2<T, Function<String, String>, T> valueConverter = valueConverters[i];
+                    Function2<T, ConfigLookup, T> valueConverter = valueConverters[i];
                     if (i > 0)
                         builder.append( ", and " );
                     builder.append( valueConverter );

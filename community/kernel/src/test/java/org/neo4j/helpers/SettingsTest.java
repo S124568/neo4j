@@ -24,18 +24,20 @@ import org.junit.Test;
 import java.io.File;
 import java.net.URI;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
 
+import org.neo4j.graphdb.config.ConfigLookup;
 import org.neo4j.graphdb.config.InvalidSettingException;
 import org.neo4j.graphdb.config.Setting;
 import org.neo4j.graphdb.factory.GraphDatabaseSettings;
+import org.neo4j.helpers.Settings.ConfigGroup;
 
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
-
-import static org.neo4j.helpers.Functions.map;
 import static org.neo4j.helpers.Settings.DURATION;
 import static org.neo4j.helpers.Settings.INTEGER;
 import static org.neo4j.helpers.Settings.MANDATORY;
@@ -44,6 +46,7 @@ import static org.neo4j.helpers.Settings.NO_DEFAULT;
 import static org.neo4j.helpers.Settings.PATH;
 import static org.neo4j.helpers.Settings.STRING;
 import static org.neo4j.helpers.Settings.basePath;
+import static org.neo4j.helpers.Settings.group;
 import static org.neo4j.helpers.Settings.isFile;
 import static org.neo4j.helpers.Settings.list;
 import static org.neo4j.helpers.Settings.matches;
@@ -61,12 +64,12 @@ public class SettingsTest
         Setting<Integer> setting = setting( "foo", INTEGER, "3" );
 
         // Ok
-        assertThat( setting.apply( map( stringMap( "foo", "4" ) ) ), equalTo( 4 ) );
+        assertThat( setting.apply( config( stringMap( "foo", "4" ) ) ), equalTo( 4 ) );
 
         // Bad
         try
         {
-            setting.apply( map( stringMap( "foo", "bar" ) ) );
+            setting.apply( config( stringMap( "foo", "bar" ) ) );
             fail();
         }
         catch ( InvalidSettingException e )
@@ -79,13 +82,13 @@ public class SettingsTest
     public void testList()
     {
         Setting<List<Integer>> setting = setting( "foo", list( ",", INTEGER ), "1,2,3,4" );
-        assertThat( setting.apply( map( stringMap() ) ).toString(), equalTo( "[1, 2, 3, 4]" ) );
+        assertThat( setting.apply( config( stringMap() ) ).toString(), equalTo( "[1, 2, 3, 4]" ) );
 
         Setting<List<Integer>> setting2 = setting( "foo", list( ",", INTEGER ), "1,2,3,4," );
-        assertThat( setting2.apply( map( stringMap() ) ).toString(), equalTo( "[1, 2, 3, 4]" ) );
+        assertThat( setting2.apply( config( stringMap() ) ).toString(), equalTo( "[1, 2, 3, 4]" ) );
 
         Setting<List<Integer>> setting3 = setting( "foo", list( ",", INTEGER ), "" );
-        assertThat( setting3.apply( map( stringMap() ) ).toString(), equalTo( "[]" ) );
+        assertThat( setting3.apply( config( stringMap() ) ).toString(), equalTo( "[]" ) );
     }
 
     @Test
@@ -94,12 +97,12 @@ public class SettingsTest
         Setting<Integer> setting = setting( "foo", INTEGER, "3", min( 2 ) );
 
         // Ok
-        assertThat( setting.apply( map( stringMap( "foo", "4" ) ) ), equalTo( 4 ) );
+        assertThat( setting.apply( config( stringMap( "foo", "4" ) ) ), equalTo( 4 ) );
 
         // Bad
         try
         {
-            setting.apply( map( stringMap( "foo", "1" ) ) );
+            setting.apply( config( stringMap( "foo", "1" ) ) );
             fail();
         }
         catch ( InvalidSettingException e )
@@ -115,12 +118,12 @@ public class SettingsTest
         Setting<Integer> setting = setting( "foo", INTEGER, "3", max( 5 ) );
 
         // Ok
-        assertThat( setting.apply( map( stringMap( "foo", "4" ) ) ), equalTo( 4 ) );
+        assertThat( setting.apply( config( stringMap( "foo", "4" ) ) ), equalTo( 4 ) );
 
         // Bad
         try
         {
-            setting.apply( map( stringMap( "foo", "7" ) ) );
+            setting.apply( config( stringMap( "foo", "7" ) ) );
             fail();
         }
         catch ( InvalidSettingException e )
@@ -135,12 +138,12 @@ public class SettingsTest
         Setting<Integer> setting = setting( "foo", INTEGER, "3", range( 2, 5 ) );
 
         // Ok
-        assertThat( setting.apply( map( stringMap( "foo", "4" ) ) ), equalTo( 4 ) );
+        assertThat( setting.apply( config( stringMap( "foo", "4" ) ) ), equalTo( 4 ) );
 
         // Bad
         try
         {
-            setting.apply( map( stringMap( "foo", "1" ) ) );
+            setting.apply( config( stringMap( "foo", "1" ) ) );
             fail();
         }
         catch ( InvalidSettingException e )
@@ -150,7 +153,7 @@ public class SettingsTest
 
         try
         {
-            setting.apply( map( stringMap( "foo", "6" ) ) );
+            setting.apply( config( stringMap( "foo", "6" ) ) );
             fail();
         }
         catch ( InvalidSettingException e )
@@ -165,12 +168,12 @@ public class SettingsTest
         Setting<String> setting = setting( "foo", STRING, "abc", matches( "a*b*c*" ) );
 
         // Ok
-        assertThat( setting.apply( map( stringMap( "foo", "aaabbbccc" ) ) ), equalTo( "aaabbbccc" ) );
+        assertThat( setting.apply( config( stringMap( "foo", "aaabbbccc" ) ) ), equalTo( "aaabbbccc" ) );
 
         // Bad
         try
         {
-            setting.apply( map( stringMap( "foo", "cba" ) ) );
+            setting.apply( config( stringMap( "foo", "cba" ) ) );
             fail();
         }
         catch ( InvalidSettingException e )
@@ -184,21 +187,21 @@ public class SettingsTest
     {
         // Notice that the default value is less that the minimum
         Setting<Long> setting = setting( "foo.bar", DURATION, "1s", min( DURATION.apply( "3s" ) ) );
-        setting.apply( map( stringMap() ) );
+        setting.apply( config( stringMap() ) );
     }
 
     @Test( expected = InvalidSettingException.class )
     public void testDurationWithValueNotWithinConstraint()
     {
         Setting<Long> setting = setting( "foo.bar", DURATION, "3s", min( DURATION.apply( "3s" ) ) );
-        setting.apply( map( stringMap( "foo.bar", "2s" ) ) );
+        setting.apply( config( stringMap( "foo.bar", "2s" ) ) );
     }
 
     @Test
     public void testDuration()
     {
         Setting<Long> setting = setting( "foo.bar", DURATION, "3s", min( DURATION.apply( "3s" ) ) );
-        assertThat( setting.apply( map( stringMap( "foo.bar", "4s" ) ) ), equalTo( 4000L ) );
+        assertThat( setting.apply( config( stringMap( "foo.bar", "4s" ) ) ), equalTo( 4000L ) );
     }
 
     @Test
@@ -207,7 +210,7 @@ public class SettingsTest
         Setting<Integer> setting = setting( "foo", INTEGER, "3" );
 
         // Ok
-        assertThat( setting.apply( map( stringMap() ) ), equalTo( 3 ) );
+        assertThat( setting.apply( config( stringMap() ) ), equalTo( 3 ) );
     }
 
     @Test
@@ -218,7 +221,7 @@ public class SettingsTest
         // Check that missing mandatory setting throws exception
         try
         {
-            setting.apply( map( stringMap() ) );
+            setting.apply( config( stringMap() ) );
             fail();
         }
         catch ( Exception e )
@@ -232,7 +235,7 @@ public class SettingsTest
     {
         Setting<File> home = setting( "home", PATH, "." );
         Setting<File> config = setting( "config", PATH, "config.properties", basePath( home ), isFile );
-        assertThat( config.apply( map( stringMap() ) ).getAbsolutePath(),
+        assertThat( config.apply( config( stringMap() ) ).getAbsolutePath(),
             equalTo( new File( ".", "config.properties" ).getAbsolutePath() ) );
     }
 
@@ -243,8 +246,8 @@ public class SettingsTest
         Setting<Integer> setting = setting( "foo", INTEGER, root );
 
         // Ok
-        assertThat( setting.apply( map( stringMap( "foo", "1" ) ) ), equalTo( 1 ) );
-        assertThat( setting.apply( map( stringMap() ) ), equalTo( 4 ) );
+        assertThat( setting.apply( config( stringMap( "foo", "1" ) ) ), equalTo( 1 ) );
+        assertThat( setting.apply( config( stringMap() ) ), equalTo( 4 ) );
     }
 
     @Test
@@ -257,13 +260,13 @@ public class SettingsTest
         Setting<String> d = setting( "D", STRING, b ); // D defaults to B
         Setting<String> e = setting( "E", STRING, d ); // E defaults to D (hence B)
 
-        assertThat( c.apply( map( stringMap( "C", "X" ) ) ), equalTo( "X" ) );
-        assertThat( c.apply( map( stringMap( "B", "X" ) ) ), equalTo( "X" ) );
-        assertThat( c.apply( map( stringMap( "A", "X" ) ) ), equalTo( "X" ) );
-        assertThat( c.apply( map( stringMap( "A", "Y", "B", "X" ) ) ), equalTo( "X" ) );
+        assertThat( c.apply( config( stringMap( "C", "X" ) ) ), equalTo( "X" ) );
+        assertThat( c.apply( config( stringMap( "B", "X" ) ) ), equalTo( "X" ) );
+        assertThat( c.apply( config( stringMap( "A", "X" ) ) ), equalTo( "X" ) );
+        assertThat( c.apply( config( stringMap( "A", "Y", "B", "X" ) ) ), equalTo( "X" ) );
 
-        assertThat( d.apply( map( stringMap() ) ), equalTo( "B" ) );
-        assertThat( e.apply( map( stringMap() ) ), equalTo( "B" ) );
+        assertThat( d.apply( config( stringMap() ) ), equalTo( "B" ) );
+        assertThat( e.apply( config( stringMap() ) ), equalTo( "B" ) );
 
     }
 
@@ -274,7 +277,7 @@ public class SettingsTest
         Setting<String> x = setting( "X", STRING, NO_DEFAULT );
         Setting<String> y = setting( "Y", STRING, MANDATORY, x );
 
-        y.apply( Functions.<String, String>nullFunction() );
+        y.apply( nullConfig() );
     }
 
     @Test
@@ -282,9 +285,9 @@ public class SettingsTest
     {
         // WHEN
         Setting<Long> setting = GraphDatabaseSettings.logical_log_rotation_threshold;
-        long defaultValue = setting.apply( map( stringMap() ) );
-        long megaValue = setting.apply( map( stringMap( setting.name(), "10M" ) ) );
-        long gigaValue = setting.apply( map( stringMap( setting.name(), "10g" ) ) );
+        long defaultValue = setting.apply( config( stringMap() ) );
+        long megaValue = setting.apply( config( stringMap( setting.name(), "10M" ) ) );
+        long gigaValue = setting.apply( config( stringMap( setting.name(), "10g" ) ) );
 
         // THEN
         assertThat( defaultValue, greaterThan( 0L ) );
@@ -299,6 +302,56 @@ public class SettingsTest
         Setting<URI> uri = setting( "mySetting", NORMALIZED_RELATIVE_URI, "http://localhost:7474///db///data///" );
 
         // When && then
-        assertThat( uri.apply( Functions.<String,String>constant( null ) ).toString(), equalTo( "/db/data" ) );
+        assertThat( uri.apply( nullConfig() ).toString(), equalTo( "/db/data" ) );
+    }
+
+
+    @Test
+    public void shouldHandleSettingGroups() throws Throwable
+    {
+        // Given
+        Setting<List<ConfigGroup>> theGroup = group( "dbms.mygroup" );
+
+        Setting<String> name = setting( "name", STRING, MANDATORY );
+        Setting<String> favouriteInstrument = setting( "instrument", STRING, MANDATORY );
+
+
+        ConfigLookup config = config( stringMap(
+                "dbms.mygroup.1000.name", "Bob Dylan",
+                "dbms.mygroup.1000.instrument", "Harmonica") );
+
+        // When
+        List<ConfigGroup> groupConfig = theGroup.apply( config );
+
+        // Then
+        ConfigGroup g = groupConfig.get( 0 );
+
+        assertThat( g.get( name ), equalTo( "Bob Dylan" ) );
+        assertThat( g.get( favouriteInstrument ), equalTo( "Harmonica" ) );
+    }
+
+    public static ConfigLookup config(Map<String, String> m)
+    {
+        return new Settings.MapConfigLookup( m );
+    }
+
+    public static ConfigLookup nullConfig()
+    {
+        return new ConfigLookup()
+        {
+
+            @Override
+            public List<Pair<String,String>> find( Pattern regex )
+            {
+                return null;
+            }
+
+            @Override
+            public String apply( String s )
+            {
+                return null;
+            }
+
+        };
     }
 }

@@ -31,7 +31,7 @@ import org.neo4j.helpers.Function;
  * backwards compatibility is not guaranteed for implementors.
  */
 public interface Setting<T>
-        extends Function<Function<String, String>, T>
+        extends Function<ConfigLookup, T>
 {
     /**
      * Get the name of the setting. This typically corresponds to a key in a properties file, or similar.
@@ -46,4 +46,5 @@ public interface Setting<T>
      * @return the default value
      */
     String getDefaultValue();
+
 }

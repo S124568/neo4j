@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import org.neo4j.graphdb.config.ConfigLookup;
 import org.neo4j.graphdb.config.Setting;
 import org.neo4j.helpers.Function;
 import org.neo4j.helpers.Functions;
@@ -57,7 +58,7 @@ public class Config implements DiagnosticsProvider
 {
     private final List<ConfigurationChangeListener> listeners = new CopyOnWriteArrayList<>();
     private final Map<String, String> params = new ConcurrentHashMap<>(  );
-    private final Function<String, String> settingsFunction;
+    private final ConfigLookup settingsFunction;
 
     // Messages to this log get replayed into a real logger once logging has been
     // instantiated.
